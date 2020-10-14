@@ -1,0 +1,354 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+# UK Productivity Factors
+
+In this document UK productivity over time will be investigated as a function of UK government spending. The ultimate goal being to answer the 3 following questions:
+
+• Does government spending on factors such as mental health, education, and research and development affect productivity in the UK?
+• Is there a relationship between government investment and productivity?
+• Can you predict productivity based on investment?
+
+A series of data was provided in order to aid in the investigation. Any justifications or assumptions will be stated when necessary.
+
+
+Load libriaries
+```{r}
+library(tidyverse)
+library(grid)
+```
+
+Load Data
+```{r}
+uk_productivity_factors <- read_csv("../Deloitte_Investment_Daniel_McGuire/clean_data/uk_productivity_factors.csv") %>%
+  mutate(time = as.character(time)) 
+
+uk_productivity_regional <- read_csv("../Deloitte_Investment_Daniel_McGuire/clean_data/uk_regional_productivity.csv")
+
+uk_gdp <- read_csv("clean_data/uk_yearly_gdp.csv")
+
+CC_data <- read_csv("../Deloitte_Investment_Daniel_McGuire/clean_data/CC_data.csv")
+
+OECD_data <- read_csv("../Deloitte_Investment_Daniel_McGuire/clean_data/OECD_data.csv")
+
+# join all international data
+all_international_data <- OECD_data %>%
+  full_join(CC_data, by = c("location", "time")) %>%
+  mutate(time = as.character(time))
+
+# subset for productivity for the whole economy and GDP
+uk_productivity_whole <- uk_productivity_regional %>%
+  filter(uk_productivity_measure == "UK Whole Economy: Output per hour worked SA: Index 2016 = 100") %>%
+  mutate(time = as.character(time)) %>%
+  drop_na()
+
+# subset GDP data for seasonally adjusted chained volume measures
+uk_gdp_focus <- uk_gdp %>%
+  select(c("time", "Gross Domestic Product: chained volume measures: Seasonally adjusted £m")) %>%
+  mutate(time = as.character(time)) %>%
+  rename("GDP" = "Gross Domestic Product: chained volume measures: Seasonally adjusted £m")
+
+
+```
+
+The relationship between government spending and individual factors will be investigated first
+
+### Mental Health
+
+```{r}
+mental_health_abscences_1 <- uk_productivity_factors %>%
+  select("time", "reason_given", "abscences_millions") %>%
+  filter(reason_given == "Serious mental health problems" | reason_given == "Stress, depression, anxiety") %>%
+  group_by(time, reason_given) %>%
+  summarise(abscences = mean(abscences_millions)) %>%
+  mutate(time = as.character(time)) %>%
+  ggplot() +
+  aes(x = time, y = abscences, fill = reason_given) +
+  geom_col() +   
+  scale_fill_manual(values = c("#fc8d59", "#91bfdb")) + 
+  labs(x = "\nYear",
+         y = "Abscences Related to Mental Health (millions)",
+         title = "Yearly Abscences Related to Mental Health\n",
+         fill = "Reason Given") +
+  
+    theme_classic(base_size = 15) +
+    theme(plot.title = element_text(hjust = 0.5), legend.position="bottom")
+
+ggsave("presentation/mental_health_abscences_1.png", plot = mental_health_abscences_1, width = 9)
+```
+
+
+```{r}
+all_international_data %>%
+  select(c("time", "location", "new_mental_health_units")) %>%
+  filter(!is.na(new_mental_health_units)) %>%
+  group_by(location) %>%
+  summarise("mental_health_units_in_hospitals" = sum(new_mental_health_units)) %>%
+  ggplot() + 
+  aes(x = reorder(location, -mental_health_units_in_hospitals), y = mental_health_units_in_hospitals) +
+  geom_col() +
+  coord_flip()
+```
+```{r}
+all_international_data %>%
+  filter(time <  2011 & time > 2003,
+         labour_productivity_measure == "USD") %>%
+  group_by(location) %>%
+  summarise(average_labour_productivity = mean(labour_productivity_value)) %>%
+  ggplot() + 
+    aes(x = reorder(location, -average_labour_productivity), y = average_labour_productivity) +
+    geom_col() +
+    coord_flip()
+```
+
+
+## Education 
+
+```{r}
+further_education_vs_productivity_uk_graph <- all_international_data %>%
+  full_join(uk_productivity_whole, by = c("time")) %>%
+  select(c("location", "time", "adult_education_level_value", "uk_productivity_value")) %>%
+  filter(!is.na(adult_education_level_value), location == "GBR", time < 2017) %>% # year 2017 had a strange value so was omitted
+  ggplot() +
+  aes(x = adult_education_level_value, y = uk_productivity_value) +
+  geom_point(colour = "#91bfdb", size = 2) + 
+  geom_smooth(method = "lm", formula = y ~ poly(x, 2), se = FALSE, colour = "#fc8d59", size = 2) + 
+  labs(x = "Tertiary Education Rate (% of 25-64 year-old)",
+       y = "UK Productivity - Output per Hour Worked",
+       title = "Further Education vs Productivity for the UK",
+      colour = "Year") +
+  theme_classic(base_size = 15) +
+  theme(plot.title = element_text(hjust = 0.5))
+
+
+ggsave("presentation/further_education_vs_productivity_uk.png", plot = further_education_vs_productivity_uk_graph, width = 9)
+
+```
+
+```{r}
+education_graph_1 <- all_international_data %>%
+  full_join(uk_productivity_whole, by = c("time")) %>%
+  full_join(uk_gdp_focus, by = c("time")) %>%
+  select(c("location", "time", "tertiary_education_subject", "tertiary_education_exp_value", "uk_productivity_value", "GDP")) %>%
+  filter(!is.na(tertiary_education_exp_value), location == "GBR", tertiary_education_subject == "PRY_NTRY", time > 2005) %>% # filter by education investment from primary to post secondary but non tertiary
+  mutate(education_spend = (GDP*tertiary_education_exp_value)/(100*1000)) %>% # calculate how much is being spent on education in pounds
+  ggplot() +
+  aes(y = education_spend, x = time) +
+  geom_line(group = 1, colour =   "#91bfdb", size = 2) +
+  geom_point(colour =   "#91bfdb", size = 3) +
+  labs(y = "\nPrimary-Secondary Education \nInvestment (£ billion)\n",
+       title = "Education Investment and Productivity for the UK over Time\n") +
+  theme_classic(base_size = 8) +
+  theme(axis.title.x=element_blank(), plot.title = element_text(hjust = 0.5))
+```
+
+
+```{r}
+education_graph_2 <- all_international_data %>%
+  full_join(uk_productivity_whole, by = c("time")) %>%
+  full_join(uk_gdp_focus, by = c("time")) %>%
+  select(c("location", "time", "tertiary_education_subject", "tertiary_education_exp_value", "uk_productivity_value", "GDP")) %>%
+  filter(!is.na(tertiary_education_exp_value), location == "GBR", tertiary_education_subject == "PRY_NTRY", time > 2005) %>% # filter by education investment from primary to post secondary but non tertiary
+  # filtered from the year 2005 as the last point was 2000 and the 5 year gap didn't make the analysis clear
+  ggplot() +
+  aes(x = time, y = uk_productivity_value) +
+  geom_line(group = 1, colour =   "#91bfdb", size = 2) +
+  geom_point(colour = "#91bfdb", size = 3) +
+  labs(x = "Year",
+       y = "Output per Hour Worked") +
+  theme_classic(base_size = 8) +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+```{r}
+# graph was saved manually
+grid.newpage() 
+grid.draw(rbind(ggplotGrob(education_graph_1), ggplotGrob(education_graph_2), size = "last"))
+```
+
+
+```{r}
+education_investment_vs_productivity_graph <- all_international_data %>%
+  full_join(uk_productivity_whole, by = c("time")) %>%
+  full_join(uk_gdp_focus, by = c("time")) %>%
+  select(c("location", "time", "tertiary_education_subject", "tertiary_education_exp_value", "uk_productivity_value", "GDP")) %>%
+  filter(!is.na(tertiary_education_exp_value), location == "GBR", tertiary_education_subject == "PRY_NTRY") %>% # filter by education investment from primary to post secondary but non tertiary
+  mutate(education_spend = (GDP*tertiary_education_exp_value)/(100*1000)) %>% # calculate how much is being spent on education in pounds
+  distinct() %>%
+  ggplot() +
+  aes(x = education_spend, y = uk_productivity_value) +
+  geom_point(colour = "#91bfdb", size = 3) + 
+  geom_smooth(method = "lm", se = FALSE, colour = "#fc8d59", size = 3) + 
+   labs(x = "\nPrimary to Secondary Education Investment (£ billions)",
+       y = "Output per Hour Worked",
+       title = "Education Investment vs Productivity for the UK\n",
+      colour = "Year") +
+  theme_classic(base_size = 14) +
+  theme(plot.title = element_text(hjust = 0.5))
+
+ggsave("presentation/education_investment_vs_productivity_graph.png", plot = education_investment_vs_productivity_graph, width = 11)
+```
+
+Repeat with the OECD Data for Labour Productivity
+```{r}
+all_international_data %>%
+  full_join(uk_productivity_whole, by = c("time")) %>%
+  full_join(uk_gdp_focus, by = c("time")) %>%
+   select(c("location", "time", "tertiary_education_subject", "tertiary_education_exp_value", "labour_productivity_value","labour_productivity_measure", "GDP")) %>%
+  filter(!is.na(tertiary_education_exp_value), location == "GBR", tertiary_education_subject == "PRY_NTRY", labour_productivity_measure !="USD", time > 2005) %>% # filter by education investment from primary to post secondary but non tertiary
+  mutate(education_spend = (GDP*tertiary_education_exp_value)/(100*1000)) %>% # calculate how much is being spent on education in pounds
+  distinct() %>%
+  ggplot() +
+  aes(x = education_spend, y = labour_productivity_value) +
+  geom_point(colour = "#91bfdb", size = 2) + 
+  geom_smooth(method = "lm", se = FALSE, colour = "#fc8d59", size = 2) +
+  labs(x = "\nPrimary to Secondary Education Investment (£ billions)",
+           y = "Labour Productivity (GDP per hour worked)",
+           title = "\nPrimary to Secondary Education Investment vs Labour Productivity",
+       colour = "Country") +
+      theme_classic(base_size = 10) +
+      theme(plot.title = element_text(hjust = 0.5))
+```
+
+
+# Research and Development 
+
+```{r}
+r_d_graph_1 <- uk_productivity_factors %>%
+  full_join(uk_gdp_focus, by = c("time")) %>%
+  full_join(uk_productivity_whole, by = c("time")) %>%
+  select(c("time", "r_d_exp_measure", "r_d_exp_value","uk_productivity_value", "GDP")) %>%
+  filter(r_d_exp_measure == "As a % of GDP") %>%
+  mutate(r_and_d_spend = (GDP*r_d_exp_value)/(100*1000)) %>%
+  distinct() %>%
+  ggplot() +
+  aes(x = time, y = r_and_d_spend) +
+  geom_line(group = 1, colour =   "#91bfdb", size = 2) +
+  geom_point(colour =   "#91bfdb", size = 3) +
+  labs(title = "R&D Investment and Productivity over Time",
+       y = "R&D Investment (£ billions)") +
+    theme_classic(base_size = 10) +
+    theme(axis.title.x=element_blank(),plot.title = element_text(hjust = 0.5))
+```
+
+```{r}
+r_d_graph_2 <- uk_productivity_factors %>%
+  full_join(uk_gdp_focus, by = c("time")) %>%
+  full_join(uk_productivity_whole, by = c("time")) %>%
+  select(c("time", "r_d_exp_measure", "r_d_exp_value","uk_productivity_value", "GDP")) %>%
+  filter(r_d_exp_measure == "As a % of GDP") %>%
+  distinct() %>%
+  ggplot() +
+  aes(x = time, y = uk_productivity_value) +
+  geom_line(group = 1, colour =   "#91bfdb", size = 2) +
+  geom_point(colour =   "#91bfdb", size = 3) +
+     labs(x = "\nYear",
+         y = "Output per Hour Worked") +
+    theme_classic(base_size = 10) +
+    theme(plot.title = element_text(hjust = 0.5))
+```
+
+```{r}
+# graph saved manually
+grid.newpage()
+grid.draw(rbind(ggplotGrob(r_d_graph_1), ggplotGrob(r_d_graph_2), size = "last"))
+```
+
+```{r}
+r_d_graph_3 <- uk_productivity_factors %>%
+  full_join(uk_gdp_focus, by = c("time")) %>%
+  full_join(uk_productivity_whole, by = c("time")) %>%
+  select(c("time", "r_d_exp_measure", "r_d_exp_value","uk_productivity_value", "GDP")) %>%
+  filter(r_d_exp_measure == "As a % of GDP") %>%
+  mutate(r_and_d_spend = (GDP*r_d_exp_value)/(100*1000)) %>%
+  distinct() %>%
+  ggplot() +
+  aes(x = r_and_d_spend, y = uk_productivity_value) +
+  geom_point(colour = "#91bfdb", size = 2) + 
+  geom_smooth(method = "lm", se = FALSE, colour = "#fc8d59", size = 2) +
+     labs(x = "\nR&D Investment (£ billion)",
+         y = "Output per Hour Worked",
+         title = "R and D Investment vs UK Productivity") +
+    theme_classic(base_size = 18) +
+    theme(plot.title = element_text(hjust = 0.5))
+
+ggsave("presentation/r_d_investment_vs_productivity_graph.png", plot = r_d_graph_3, width = 11)
+```
+
+
+
+## Government Investment vs Productivity
+
+
+### Infrastructure Investment
+```{r}
+cross_country_infrastructure_investment <- all_international_data %>%
+  select(c("time", "location", "labour_productivity_measure", "labour_productivity_value", "total_investment", "population")) %>%
+  filter(!is.na(total_investment),
+         total_investment > 0, # one point for Norwary was set to zero, unlikely
+         labour_productivity_measure == "USD",
+         location %in% c("LUX", "BEL", "NOR", "NLD", "USA", "GBR")) %>% # compare UK against countries that are better than use in terms of productivity
+  mutate(investment_per_pop = total_investment/population) %>%
+  distinct() %>%
+  ggplot() +
+  aes(x = investment_per_pop, y = labour_productivity_value, colour = location) +
+  geom_point() + 
+  geom_smooth(method = "lm", se = FALSE)+
+  labs(x = "\nInfrastructure Investment (US Dollars /per person)",
+           y = "Labour Productivity (GDP per hour worked)",
+           title = "Infrastructure Investment per Population vs Labour Productivity",
+       colour = "Country") +
+      theme_classic(base_size = 18) +
+      theme(plot.title = element_text(hjust = 0.5))
+
+ggsave("presentation/cross_country_infrastructure_investment_graph.png", plot = cross_country_infrastructure_investment, width = 11)
+```
+
+### Intangible Assets
+
+```{r}
+intangible_assets_graph <- uk_productivity_factors %>%
+  full_join(uk_productivity_whole, by = "time") %>%
+  select(c("time", "uk_productivity_value","asset_category", "asset_value_billions")) %>%
+  filter(asset_category == "Total") %>%
+  distinct() %>%
+  ggplot() +
+  aes(x = asset_value_billions, y = uk_productivity_value) +
+  geom_point(colour = "#91bfdb", size = 2) + 
+  geom_smooth(method = "lm", se = FALSE, colour = "#fc8d59", size = 2) +
+  labs(x = "\nIntangible Asset Investment (£ billions)",
+             y = "Output per hour Worked",
+             title = "Intangible Asset Investment vs UK Productivity",
+         colour = "Country") +
+        theme_classic(base_size = 18) +
+        theme(plot.title = element_text(hjust = 0.5))
+
+ggsave("presentation/intangible_assets_graph.png", plot = intangible_assets_graph, width = 11)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

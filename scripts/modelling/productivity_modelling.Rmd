@@ -1,0 +1,445 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+Load Libriaries
+```{r}
+library(tidyverse)
+library(janitor)
+library(broom)
+library(caret)
+library(modelr)
+library(glmulti)
+library(pROC)
+```
+
+Read in data
+```{r}
+uk_productivity_factors <- read_csv("../../clean_data/uk_productivity_factors.csv") %>%
+  mutate(time = as.character(time)) 
+
+uk_productivity_regional <- read_csv("../../clean_data/uk_regional_productivity.csv")
+
+uk_gdp <- read_csv("../../clean_data/uk_yearly_gdp.csv")
+
+CC_data <- read_csv("../../clean_data/CC_data.csv")
+
+OECD_data <- read_csv("../../clean_data/OECD_data.csv")
+
+
+# join all international data
+all_international_data <- OECD_data %>%
+  full_join(CC_data, by = c("location", "time")) %>%
+  mutate(time = as.character(time))
+
+# subset for productivity for the whole economy and GDP
+uk_productivity_whole <- uk_productivity_regional %>%
+  filter(uk_productivity_measure == "UK Whole Economy: Output per hour worked SA: Index 2016 = 100") %>%
+  mutate(time = as.character(time)) %>%
+  drop_na()
+
+# subset GDP data for seasonally adjusted chained volume measures
+uk_gdp_focus <- uk_gdp %>%
+  select(c("time", "Gross Domestic Product: chained volume measures: Seasonally adjusted £m")) %>%
+  mutate(time = as.character(time)) %>%
+  rename("GDP" = "Gross Domestic Product: chained volume measures: Seasonally adjusted £m")
+
+
+# make a uk super data set
+
+uk_super_data <- all_international_data %>%
+  filter(location == "GBR") %>%
+  full_join(uk_gdp_focus, by = "time") %>%
+  full_join(uk_productivity_whole, by = "time")
+
+```
+
+## International Productivity Predictor
+ 
+```{r}
+all_international_data %>%
+  filter(labour_productivity_measure == "USD", !is.na(average_wages_value)) %>%
+  distinct() %>%
+  ggplot() +
+  aes(x = average_wages_value, y = labour_productivity_value) +
+  geom_point() + 
+  geom_smooth(method = "lm") 
+```
+ 
+```{r}
+all_international_data %>%
+  filter(labour_productivity_measure == "USD", !is.na(broadband_value)) %>%
+  distinct() %>%
+  ggplot() +
+  geom_smooth(method = "lm") + 
+  aes(x = broadband_value, y = labour_productivity_value)+
+  geom_point()
+```
+ 
+```{r}
+all_international_data %>%
+  filter(labour_productivity_measure == "USD", !is.na(trade_union_density_percent)) %>%
+  distinct() %>%
+  ggplot() +
+  aes(x = trade_union_density_percent, y = labour_productivity_value) +
+  geom_point() + 
+ geom_smooth(method = "lm") 
+
+```
+ 
+
+ 
+```{r}
+all_international_data %>%
+  filter(labour_productivity_measure == "USD", !is.na(total_investment)) %>%
+   mutate(investment_per_pop = total_investment/population) %>%
+  distinct() %>%
+ggplot() +
+  aes(x = investment_per_pop, y = labour_productivity_value)+
+  geom_point() + 
+   geom_smooth(method = "lm")
+```
+ 
+ 
+```{r}
+all_international_data %>%
+  filter(labour_productivity_measure == "USD", !is.na(adult_education_level_value)) %>%
+  distinct() %>%
+ggplot() +
+  aes(x = adult_education_level_value, y = labour_productivity_value)+
+  geom_point() + 
+ geom_smooth(method = "lm") 
+```
+
+
+
+```{r}
+all_international_data %>%
+  filter(labour_productivity_measure == "USD", !is.na(tertiary_education_exp_value)) %>%
+ggplot() +
+  aes(x = tertiary_education_exp_value, y = labour_productivity_value, colour = tertiary_education_subject)+
+  geom_point() +
+  geom_smooth(method = "lm")
+```
+
+```{r}
+all_international_data%>%
+  filter(labour_productivity_measure == "USD", !is.na(r_d_research_value)) %>%
+  mutate(rd_investment_per_pop = r_d_research_value/population) %>% # calculate rate per population for better normalisation
+  distinct() %>%
+ ggplot() +
+  aes(x = rd_investment_per_pop, y = labour_productivity_value)+
+  geom_point() + 
+ geom_smooth(method = "lm") 
+```
+
+Based on these initial graphs the following data will be used as predictors for labour productivity:
+-average_wages_value
+-broadband_value
+-infrastructure investment per population
+-adult_education_level_value
+-research and development investment per population
+
+subset our data for these variables
+```{r}
+model_data <- all_international_data %>%
+  select("location", "time", "labour_productivity_measure", "labour_productivity_value", "average_wages_value", "broadband_value", "r_d_research_value", "adult_education_level_value", "total_investment", "population") %>%
+  mutate(rd_invest_per_pop = r_d_research_value/population,
+         infra_invest_per_pop = total_investment/population) %>%
+  filter(labour_productivity_measure == "USD") %>%
+  distinct()
+
+
+model_data_complete <- model_data[complete.cases(model_data), ]
+```
+
+Try multi-linear regression model
+```{r}
+productivity_multi_lin_model <- lm(labour_productivity_value ~ average_wages_value + broadband_value + adult_education_level_value + rd_invest_per_pop + infra_invest_per_pop , data = model_data)
+
+summary(productivity_multi_lin_model)
+
+```
+
+800 data points removed due to missing values, therefore we are trying to predict productivity on only ~250 points, this might not be enough
+
+```{r}
+tidy_out <- clean_names(tidy(productivity_multi_lin_model))
+glance_out <- clean_names(glance(productivity_multi_lin_model))
+tidy_out
+glance_out
+```
+r&d investment isn't statistically significant
+
+```{r}
+par(mfrow = c(2, 2))
+plot(productivity_multi_lin_model)
+```
+Diagnostic charts don't look great for our model
+
+Let's run cross validation on the model:
+
+```{r}
+cv_10_fold <- trainControl(method = "cv", number = 10, savePredictions = TRUE)
+
+productivity_multi_lin_model_cv <- train(labour_productivity_value ~ average_wages_value + broadband_value + adult_education_level_value + rd_invest_per_pop,
+               data = model_data_complete,
+               trControl = cv_10_fold,
+               method = 'lm')
+```
+
+```{r}
+mean(productivity_multi_lin_model_cv$resample$RMSE)
+```
+```{r}
+mean(productivity_multi_lin_model_cv$resample$Rsquared)
+```
+
+
+Let's try international data on logistic regression
+
+How likely is the productivity of a nation to rise given the changes in factors from the previous years
+```{r}
+logistic_model_data <- model_data %>%
+  mutate(prod_prev = ifelse(location == lag(location), lag(labour_productivity_value), NA),
+         prod_increase = labour_productivity_value > prod_prev,
+         delta_wages = ifelse(location == lag(location), average_wages_value - lag(average_wages_value), NA), # calculate the change in average wages year to year
+         delta_broadband = ifelse(location == lag(location), broadband_value - lag(broadband_value), NA), # calculate the change in broadband penetration year to year
+         delta_adult_education = ifelse(location == lag(location), adult_education_level_value - lag(adult_education_level_value), NA),# calculate the change in adult_education year to year
+         delta_infra_invest = ifelse(location == lag(location), infra_invest_per_pop - lag(infra_invest_per_pop), NA), # calculate the change in infrastructure investment per population year to year
+         delta_rd_invest = ifelse(location == lag(location), rd_invest_per_pop - lag(rd_invest_per_pop), NA)) %>% # calculate the change in R&D investment per population year to year
+  filter(!is.na(prod_increase)) # remove first year of each country as we don't have anything to compare it to
+
+
+summary(logistic_model_data)
+```
+
+```{r}
+log_reg_model <- glm(prod_increase ~ delta_wages + delta_broadband + delta_adult_education +  delta_rd_invest + delta_infra_invest, data = logistic_model_data, family = binomial(link = 'logit'))
+
+summary(log_reg_model)
+```
+Again a lot of data is missing so we are only working on around 200 data points which may not be enough
+
+```{r}
+logistic_model_data_w_pred <- logistic_model_data %>%
+  add_predictions(log_reg_model, type = "response")
+
+roc_obj_logistic_model <- logistic_model_data_w_pred %>%
+  roc(response = prod_increase, predictor = pred)
+
+roc_curve <- ggroc(data = roc_obj_logistic_model, legacy.axes = TRUE, colour = "#91bfdb") +
+  coord_fixed() +
+  labs(x = "Specificity",
+       y = "Sensitivity",
+       title = "ROC Curve for Logistic Regression Model") +
+  theme_classic(base_size = 10) + 
+  geom_abline(colour = "#fc8d59") 
+
+roc_curve
+```
+
+```{r}
+tidy_out <- clean_names(tidy(log_reg_model))
+glance_out <- clean_names(glance(log_reg_model))
+tidy_out
+```
+Looking at these P-values these predictors are not statistically significant 
+
+```{r}
+logistic_model_data_cv <- logistic_model_data %>%
+  mutate(prod_increase = as_factor(if_else(prod_increase, "t", "f")))
+
+logistic_model_data_cv <- logistic_model_data_cv[complete.cases(logistic_model_data_cv), ]
+
+
+train_control <- trainControl(method = "repeatedcv", 
+                              number = 5,
+                              repeats = 100,
+                              savePredictions = TRUE, 
+                              classProbs = TRUE, 
+                              summaryFunction = twoClassSummary)
+
+
+
+log_leg_model_cv <- train(prod_increase ~ delta_wages + delta_broadband + delta_adult_education +  delta_rd_invest + delta_infra_invest,
+               data = logistic_model_data_cv,
+               trControl = train_control,
+               method = "glm",
+               family = binomial(link = 'logit'))
+
+summary(log_leg_model_cv)
+```
+```{r}
+log_leg_model_cv$results
+```
+
+
+
+Very simple multi-linear regressor:
+
+```{r}
+model_data <- all_international_data %>%
+  select("location", "time", "labour_productivity_measure", "labour_productivity_value", "r_d_research_value", "adult_education_level_value", "total_investment", "population") %>%
+  mutate(rd_invest_per_pop = r_d_research_value/population,
+         infra_invest_per_pop = total_investment/population) %>%
+  filter(labour_productivity_measure == "USD") %>%
+  distinct()
+```
+
+
+
+## UK Productivity Predictor
+
+```{r}
+uk_super_data %>%
+  filter(!is.na(broadband_value)) %>%
+  ggplot() + 
+  aes(x = broadband_value, y = uk_productivity_value) +
+  geom_point() + 
+  geom_smooth(method = "lm") 
+```
+
+```{r}
+uk_super_data %>%
+  filter(!is.na(average_wages_value)) %>%
+  distinct() %>%
+  ggplot() + 
+  aes(x = average_wages_value, y = uk_productivity_value) +
+  geom_point() + 
+  geom_smooth(method = "lm") 
+```
+We already knew this
+
+```{r}
+uk_super_data %>%
+  filter(!is.na(export_by_business_size_value),
+         export_business_size_subject == "ALLSIZE") %>%
+  distinct() %>%
+  ggplot() + 
+  aes(x = export_by_business_size_value, y = uk_productivity_value) +
+  geom_point() + 
+  geom_smooth(method = "lm", se = FALSE) 
+
+
+
+```
+
+```{r}
+uk_super_data %>%
+  filter(!is.na(hc_quality_value)) %>%
+  distinct() %>%
+  ggplot() + 
+  aes(x = hc_quality_value, y = uk_productivity_value) +
+  geom_point() + 
+  geom_smooth(method = "lm", se = FALSE) 
+```
+
+```{r}
+uk_super_data %>%
+  filter(!is.na(in_goods_services_value),
+        in_goods_services_measure == "MLN_USD") %>%
+  distinct() %>%
+  ggplot() + 
+  aes(x = in_goods_services_value, y = uk_productivity_value) +
+  geom_point() + 
+  geom_smooth(method = "lm", se = FALSE) +
+  facet_wrap(~ in_goods_services_subject)
+```
+Exports looks the most promising of the 3
+
+```{r}
+uk_super_data %>%
+  filter(!is.na(employment_protection_value)) %>%
+  distinct() %>%
+  ggplot() + 
+  aes(x = employment_protection_value, y = uk_productivity_value) +
+  geom_point() + 
+  geom_smooth(method = "lm", se = FALSE)
+```
+Not enough data
+
+
+```{r}
+uk_super_data %>%
+  filter(!is.na(trade_union_density_percent)) %>%
+  distinct() %>%
+  ggplot() + 
+  aes(x = trade_union_density_percent, y = uk_productivity_value) +
+  geom_point() + 
+  geom_smooth(method = "lm", formula = y ~ poly(x, 2), se = FALSE)
+```
+
+From this investigation and what we already know, the following measures will be used to predict uk productivity:
+-exports value
+-average wages value
+-broadband value
+-infrastructure investment per population
+-adult_education_level_value
+-research and development investment per population
+-trade union density
+
+
+```{r}
+uk_model_data <- uk_super_data %>%
+  select("time","uk_productivity_value", "average_wages_value", "broadband_value", "r_d_research_value", "adult_education_level_value", "total_investment", "population", "in_goods_services_value", "in_goods_services_subject", "in_goods_services_measure", "trade_union_density_percent") %>%
+  mutate(rd_invest_per_pop = r_d_research_value/population,
+         infra_invest_per_pop = total_investment/population) %>%
+  filter(in_goods_services_subject == "EXP",
+         in_goods_services_measure == "MLN_USD") %>%
+  distinct() %>%
+  select(-c("in_goods_services_subject", "in_goods_services_measure"))
+
+summary(uk_model_data)
+
+
+uk_model_data_complete <- uk_model_data[complete.cases(uk_model_data), ]
+```
+
+
+## Multi-linear regression
+
+```{r}
+uk_productivity_multi_lin_model <- lm(uk_productivity_value ~ average_wages_value + broadband_value + adult_education_level_value + rd_invest_per_pop + infra_invest_per_pop + trade_union_density_percent + in_goods_services_value, data = uk_model_data_complete)
+
+summary(uk_productivity_multi_lin_model)
+```
+
+```{r}
+tidy_out <- clean_names(tidy(uk_productivity_multi_lin_model))
+glance_out <- clean_names(glance(uk_productivity_multi_lin_model))
+tidy_out
+glance_out
+```
+
+There is no statistical significance from the factors in the current model
+
+As I have concerns about the size of the data set I will use K-fold validation to confirm the results
+
+
+```{r}
+cv_10_fold <- trainControl(method = "cv", number = 10, savePredictions = TRUE)
+
+uk_productivity_multi_lin_model_cv <- train(uk_productivity_value ~ average_wages_value + broadband_value + adult_education_level_value + rd_invest_per_pop + infra_invest_per_pop + in_goods_services_value,
+               data = uk_model_data_complete,
+               trControl = cv_10_fold,
+               method = 'lm')
+```
+
+```{r}
+mean(uk_productivity_multi_lin_model_cv$resample$RMSE)
+```
+```{r}
+mean(uk_productivity_multi_lin_model_cv$resample$Rsquared)
+```
+
+The diagnotic plots for this model again isn't ideal
+```{r}
+par(mfrow = c(2, 2))
+plot(uk_productivity_multi_lin_model)
+```
+
+
+
+
