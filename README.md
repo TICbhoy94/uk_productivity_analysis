@@ -28,4 +28,9 @@ Following this, all data was cleansed and combined where possible. This was to a
 • Productivity has not been successfully modelled to a satisfactory level in this project although it is believed to be achievable <br> 
 
 ### Next steps
-• Explore regional data for the UK, specifically Scotland as per the breif. It would be interesting to understand why areas like London are highly productive compared to other areas in the UK (although it will be mostly due to the strength of the financial sector in London, if you were to adjust for this and then compare other factors such as health and education investment). 
+• Explore regional data for the UK, specifically Scotland as per the breif. It would be interesting to understand why areas like London are highly productive compared to other areas in the UK (although it will be mostly due to the strength of the financial sector in London, if you were to adjust for this and then compare other factors such as health and education investment) <br>
+• Explore additional factors in greater granularity (financial data, commuting data, ease of doing business data, etc.). Time restrictions prevented this from occuring<br>
+• Compare more data from different countries and identify shortcomings in our growth strategies. Why are countries like Luxembourg and Norway more productive than the UK? <br>
+Investigate the effect mental health has on productivity in more detail. The data provided for this project was limited so more would be required to get a true understanding of mental health and productivity <br>
+More feature engineering and model refinement
+
