@@ -1,5 +1,7 @@
 # UK Productivity Analysis
 
+###### <i> This project was done using data from a provider who wished to remain confidental in regards to any analysis. The project was completed and results presented before all information relating to the provider was stripped from all documentation and all files were copied to a new repo. </i>
+
 Productivity is key to the development of local businesses and the wider economy. Over the past decade, productivity has slowed down globally with the UK lagging behind some other developed economies.
 
 
