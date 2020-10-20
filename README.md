@@ -38,7 +38,7 @@ In the above graph the producitivity of the UK is compared against the top 5 mos
 
 #### Modeling
 
-The brief asked if productivity could be predicted. Two models were developed in an attempt to acheived this: A multi-variable linear regression model and a logistic regression model. Both models produced what looked to be promising results however at closer examination into the properties of the models, neither was suitable as a predictor of the productivity. The main issue was the lack of coherent data. This lead to poor statistical significance values for variables and therefore confidence in the models was low.
+The brief asked if productivity could be predicted. Two models were developed in an attempt to achieve this: A multi-variable linear regression model and a logistic regression model. Both models produced what looked to be promising results however at closer examination into the properties of the models, neither was suitable as a predictor of the productivity. The main issue was the lack of coherent data. This lead to poor statistical significance values for variables and therefore confidence in the models was low.
 
 ### Conclusions
 
